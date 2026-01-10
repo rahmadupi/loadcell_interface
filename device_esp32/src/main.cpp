@@ -2,6 +2,15 @@
 
 BluetoothSerial SerialBT;
 
+// #ifdef VERBOSE
+// void DEBUG(const char* msg) {
+//     Serial.printf(msg);
+//     Serial.printf("\n");
+// }
+// #else
+// void DEBUG(const String& msg) {}
+// #endif
+
 void error_led_blink(int times, int delay_ms) {
     for (int i = 0; i < times; i++) {
         digitalWrite(led_pin, HIGH);
@@ -16,6 +25,8 @@ void FRESH_SETUP() {
     EEPROM.writeByte(ADDR_PROGRAM_TYPE, PROGRAM_TYPE);
     EEPROM.writeString(ADDR_PIN, "1234\0");
     EEPROM.writeInt(ADDR_CELL_INTERVAL_MS, 100);
+    EEPROM.writeFloat(ADDR_CELL_SCALE, 1.0f);
+    EEPROM.writeLong(ADDR_CELL_OFFSET, 0);
 
     EEPROM.commit();
     delay(1000);

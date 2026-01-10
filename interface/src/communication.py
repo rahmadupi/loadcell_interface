@@ -26,6 +26,11 @@ class serial_com():
         self.connect()
     
     def connect(self, baudrate=115200, timeout=100):
+        # try:
+        #     raise Exception  # Force going to except block
+        # except Exception:
+        #     #print stack
+        #     traceback.print_stack()
         # Connect Bluetooth First
         def run_ps(cmd, timeout=3):
             try:
@@ -58,7 +63,7 @@ class serial_com():
             # print(f"Checking: {port.device}")
             # print(port.description)
             try:
-                if bt_device_key in port.hwid:
+                if bt_device_key and bt_device_key in port.hwid:
                     print(f"Attempting Bluetooth connection on {port.device}...")
                     try:
                         self.ser = Serial(port.device, baudrate=baudrate, timeout=1)
@@ -116,10 +121,10 @@ class serial_com():
         result = []
         for item in data:
             if isinstance(item, int):
-                if 0 <= item <= 255:
+                if 0 <= item < 100:
                     result.append(item)
-                elif 0 <= item <= 65535:
-                    result.extend(list(struct.pack('<H', item)))
+                elif 100 <= item <= 65535:
+                    result.extend(list(struct.pack('<I', item)))
                 else:
                     raise ValueError(f"Integer {item} out of range (0-65535)")
             elif isinstance(item, str):
@@ -133,7 +138,7 @@ class serial_com():
         
         return bytes(result)
     
-    def write(self, data, header=True, convert_to_bytes=False, debug=True):
+    def write(self, data, header=True, convert_to_bytes=False, debug=False):
         try:
             if convert_to_bytes:
                 byte_data = self.convert_to_bytes(data)
@@ -171,7 +176,7 @@ class serial_com():
     def read(self, timeout=100, debug=False): #ms
         if self.ser is not None and not self.ser.is_open:
             return
-        
+    
         end_timeout = time() + (timeout / 1000.0)
         while time() < end_timeout:
             # Only lock when checking/reading from serial port
@@ -187,6 +192,7 @@ class serial_com():
                     data = self.ser.read(int.from_bytes(data_len, byteorder='little'))
                     if debug:
                         Color.error(f"Read data: {data}")
+                        input("Press Enter to Leave Read Debug ...")
 
                     return ["response", list(data)]
             
@@ -196,8 +202,14 @@ class serial_com():
         return ["timeout", []]
     
     def is_connected(self):
-        self.connected =self.ser and self.ser.is_open
+        try:
+            self.connected =self.ser and self.ser.is_open
+        except Exception:
+            self.connected = False  
         return self.connected
+    
+    def connection_method(self):
+        return self.device.name if self.device else COMMS_METHOD.NO_CONNECTION.name
         
     def close(self):
         if self.ser and self.ser.is_open:
@@ -206,7 +218,7 @@ class serial_com():
             
     def info(self):
         return {
-            "device": self.device,
+            "device": self.connection_method(),
             "connected": self.connected,
             "port": self.ser.port if self.ser else None,
             "baudrate": self.ser.baudrate if self.ser else None,

@@ -170,9 +170,11 @@ class interface:
             "MODE":["SET MODE"],
             "TARE":["SET TARE"],
             "CALIBRATE":["CALIBRATE"],
-            "SCALE":["SET SCALE"],
             "GRAPH":["OPEN GRAPH", "CLOSE GRAPH"],
+            "SET SCALE":["SET SCALE FACTOR"],
+            "GET SCALE":["GET SCALE FACTOR"],
             "SET_PIN":["SET PIN"],
+            "GET_PIN":["GET PIN"],
             "CONNECTION":["CLOSE CONNECTION","OPEN CONNECTION"],
         }
         
@@ -199,7 +201,7 @@ class interface:
         print(f"[F]: {force:0.3f} N")
         Color.warn(f"[!] Set loadcell to ACTIVE mode to enable reading\n") if loadcell_info.get("mode") != LOADCELL_MODE.ACTIVE.name else print()
         
-    def clear_console(self, FULL=True, lines=6):
+    def clear_console(self, FULL=True, lines=9):
         if FULL:
             os.system('cls' if os.name == 'nt' else 'clear')
         else:
@@ -210,7 +212,7 @@ class interface:
         
     def run(self):
         while(True):    
-            if not self.loadcell.status() and not self.intentional_disconnect:
+            if not self.loadcell.check_connection() and not self.intentional_disconnect:
                 Color.error("Loadcell not connected.")
                 Color.info("Attempting to reconnect...")
                 self.loadcell.reconnect()
@@ -223,14 +225,14 @@ class interface:
                     if k=="GRAPH":
                         print(Color.wrap("[>]", fore=Fore.BLUE, bright=True) + Color.wrap(f" {v[1 if self.graph_open else 0]}", fore=Fore.WHITE, bright=True))
                     elif k=="CONNECTION":
-                        print(Color.wrap("[>]", fore=Fore.BLUE, bright=True) + Color.wrap(f" {v[1 if not self.loadcell.status() else 0]}", fore=Fore.WHITE, bright=True))
+                        print(Color.wrap("[>]", fore=Fore.BLUE, bright=True) + Color.wrap(f" {v[1 if not self.loadcell.check_connection() else 0]}", fore=Fore.WHITE, bright=True))
                     else:
                         print(Color.wrap("[>]", fore=Fore.BLUE, bright=True) + Color.wrap(f" {v[0]}", fore=Fore.WHITE, bright=True))
                 else:
                     if k=="GRAPH":
                         Color.gray(f"[ ] {v[1 if self.graph_open else 0]}")
                     elif k=="CONNECTION":
-                        Color.gray(f"[ ] {v[1 if not self.loadcell.status() else 0]}")
+                        Color.gray(f"[ ] {v[1 if not self.loadcell.check_connection() else 0]}")
                     else:
                         Color.gray(f"[ ] {v[0]}")
             try:
@@ -252,24 +254,32 @@ class interface:
                         self.set_tare()
                     elif selected_key==opt_list[2]:  # CALIBRATE
                         self.calibrate()
-                    elif selected_key==opt_list[3]:  # SCALE
-                        self.set_scale()
-                    elif selected_key==opt_list[4]:  # GRAPH
+                    elif selected_key==opt_list[3]:  # GRAPH
                         self.toggle_graph()
-                    elif selected_key==opt_list[5]:  # SET_PIN
+                    elif selected_key==opt_list[4]:  # SET SCALE
+                        self.set_scale()
+                    elif selected_key==opt_list[5]:  # GET SCALE
+                        self.get_scale()
+                    elif selected_key==opt_list[6]:  # SET_PIN
                         self.set_pin()
-                    elif selected_key==opt_list[6]:  # CONNECTION
+                    elif selected_key==opt_list[7]:  # GET_PIN
+                        self.get_pin()
+                    elif selected_key==opt_list[8]:  # CONNECTION
                         self.open_close_connection()
             except Exception as e:
                 print(e)
   
     def set_tare(self):
-        input("Press Enter to set tare...")
-        if (not self.loadcell.set_tare()):
-            Color.error("[-] Failed to set tare.")
-        else:
-            Color.success("[+] Tare set successfully.")
-        input("Press Enter to continue...")
+        try:
+            self.clear_console(False)
+            Color.info("[X] Set Tare")
+            if (not self.loadcell.set_tare()):
+                Color.error("[-] Failed to set tare.")
+            else:
+                Color.success("[+] Tare set successfully.")
+            input("Press Enter to continue...")
+        except KeyboardInterrupt:
+            return None
             
     def set_mode(self):
         self.clear_console(False)
@@ -300,7 +310,14 @@ class interface:
                     interval=None
                     print(f"Selected Mode: {selected_mode}")
                     if selected_mode is LOADCELL_MODE.RUN.name or selected_mode is LOADCELL_MODE.ACTIVE.name:
-                        interval = input("Enter reading interval in hz\n> ")
+                        interval = input("Enter reading interval in hz default(100)\n> ")
+                        if not interval.isdigit() or int(interval)<=0:
+                            Color.error("[-] Invalid input. Using default 100 Hz.")
+                            interval=100
+                        if int(interval) < 100:
+                            interval=100
+                        else:
+                            interval=int(interval)
                     if not self.loadcell.set_mode(LOADCELL_MODE[selected_mode], interval):
                         Color.error("[-] Failed to set mode.")
                     else:
@@ -310,9 +327,13 @@ class interface:
                 elif keyboard_input==Keyboard.ESCAPE:
                     return None
                 self.clear_console(False, lines=len(available_modes))
+        except KeyboardInterrupt:
+            Color.error("[-] Set mode cancelled by user.")
+            input("Press Enter to continue...")
+            return None
         except Exception as e:
             Color.error(f"[-] Failed to set mode: {e}")
-            traceback.print_exc()
+            # traceback.print_exc()
             input("Press Enter to continue...")
     
     def calibrate(self):
@@ -340,10 +361,12 @@ class interface:
                         try:
                             weight=float(input("Enter known weight in grams:\n> "))
                             if weight<=0:
-                                Color.warn("[-] Weight must be positive.")
+                                raise ValueError("Weight must be positive.")
                             else:
                                 break
-                        except Exception as e:
+                        except KeyboardInterrupt:
+                            raise Exception("")
+                        except ValueError as e:
                             Color.warn(f"Invalid weight: {e}")
                             input("Press Enter to retry...")
                             self.clear_console(False, lines=4)
@@ -353,7 +376,7 @@ class interface:
                     sleep(0.5)
                     self.loadcell.calibrate(step, weight=weight)
                     input("Press Enter to continue...")
-                    self.clear_console(False, lines=9)
+                    self.clear_console(False, lines=10)
                 elif step==1:
                     print("Tareing and Zeroing scale...")
                     sleep(1)
@@ -378,7 +401,7 @@ class interface:
             return None
         except Exception as e:
             Color.error(f"[-] Calibration failed: {e}")
-            traceback.print_exc()
+            # traceback.print_exc()
             input("Press Enter to continue...")
             
     def set_scale(self):
@@ -406,7 +429,7 @@ class interface:
             return None
         except Exception as e:
             Color.error(f"[-] Failed to set scale factor: {e}")
-            traceback.print_exc()
+            # traceback.print_exc()
             input("Press Enter to continue...")
         
         print(f"Setting scale factor to: {scale_factor}")
@@ -415,66 +438,72 @@ class interface:
         input("Press Enter to continue...")
     
     def toggle_graph(self):
-        if self.graph_open:
-            # Close graph
-            self.graph_open = False
-            if self.plotter and self.plotter.is_active():
-                self.plotter.stop()
-            Color.info("[X] Graph closed.")
-        else:
-            # Open graph
-            self.clear_console(False, lines=6)
-            Color.info("[X] Opening graph")
-            loadcell_status = self.loadcell.info()
-            try:
-                if loadcell_status['mode'] != LOADCELL_MODE.ACTIVE.name or not loadcell_status['connected']:
-                    Color.warn("[-] Please set loadcell to ACTIVE mode and ensure it is connected to open the graph.")
-                    self.graph_open = False
-                    input("Press Enter to continue...")
-                    return None
-                hertz, time_scale = 0,0
-                while True:
-                    try:
-                        if not hertz:
-                            hertz=int(input("Enter refresh rate in Hz (e.g., 20):\n> "))
-                            if hertz<=0:
-                                raise ValueError("Refresh rate must be positive.")
-                    except Exception as e:
-                        print(f"Invalid refresh rate: {e}")
-                        input("Press Enter to retry...")
-                        continue
-                    
-                    try:
-                        time_scale=float(input("Enter time scale (seconds displayed on x-axis, e.g., 3.0):\n> "))
-                        if time_scale<=0:
-                            raise ValueError("Time scale must be positive.")
-                        else:
-                            break
-                    except Exception as e:
-                        print(f"Invalid time scale: {e}")
-                        input("Press Enter to retry...")
-                        continue
-                interval=int(1000/hertz) if hertz>0 else 50
-                success = self.plotter.start(interval_ms=interval, time_scale=time_scale)
-                self.graph_open = True
-                if success:
-                    self.graph_open = False
-                    Color.success("[+] Graph opened in separate window.")
-                    
-                else:
-                    Color.error("[-] Failed to start plotter")
-                    
-            except Exception as e:
-                Color.error(f"[-] Failed to open graph: {e}")
-                tb = traceback.format_exc()
-                Color.gray(tb)
+        try:
+            if self.graph_open:
+                # Close graph
                 self.graph_open = False
-        
-        input("Press Enter to continue...")
+                if self.plotter and self.plotter.is_active():
+                    self.plotter.stop()
+                Color.info("[X] Graph closed.")
+            else:
+                # Open graph
+                self.clear_console(False, lines=6)
+                Color.info("[X] Opening graph")
+                loadcell_status = self.loadcell.info()
+                try:
+                    if loadcell_status['mode'] != LOADCELL_MODE.ACTIVE.name or not loadcell_status['connected']:
+                        Color.warn("[-] Please set loadcell to ACTIVE mode and ensure it is connected to open the graph.")
+                        self.graph_open = False
+                        input("Press Enter to continue...")
+                        return None
+                    hertz, time_scale = 0,0
+                    while True:
+                        try:
+                            if not hertz:
+                                hertz=int(input("Enter refresh rate in Hz (e.g., 20):\n> "))
+                                if hertz<=0:
+                                    raise ValueError("Refresh rate must be positive.")
+                        except Exception as e:
+                            print(f"Invalid refresh rate: {e}")
+                            input("Press Enter to retry...")
+                            self.clear_console(False, lines=4)
+                            continue
+                        
+                        try:
+                            time_scale=float(input("Enter time scale (seconds displayed on x-axis, e.g., 3.0):\n> "))
+                            if time_scale<=0:
+                                raise ValueError("Time scale must be positive.")
+                            else:
+                                break
+                        except Exception as e:
+                            print(f"Invalid time scale: {e}")
+                            input("Press Enter to retry...")
+                            self.clear_console(False, lines=4)
+                            continue
+                    interval=int(1000/hertz) if hertz>0 else 50
+                    success = self.plotter.start(interval_ms=interval, time_scale=time_scale)
+                    self.graph_open = True
+                    if success:
+                        self.graph_open = False
+                        Color.success("[+] Graph opened in separate window.")
+                        
+                    else:
+                        Color.error("[-] Failed to start plotter")
+                        
+                except Exception as e:
+                    Color.error(f"[-] Failed to open graph: {e}")
+                    # tb = traceback.format_exc()
+                    # Color.gray(tb)
+                    self.graph_open = False
+            
+            input("Press Enter to continue...")
+        except KeyboardInterrupt:
+            Color.error("[-] Toggle graph cancelled by user.")
+            input("Press Enter to continue...")
             
     
     def open_close_connection(self):
-        if self.loadcell.status():
+        if self.loadcell.check_connection():
             self.intentional_disconnect=True
             self.loadcell.close()
             Color.warn("[+] Connection closed.")
@@ -486,19 +515,47 @@ class interface:
         input("Press Enter to close connection...")
     
     def set_pin(self):
-        self.clear_console(False)
-        Color.info("[X] Set PIN")
-        pin = input("Enter new PIN (4Digit Number)\n> ")
-        if not pin.isdigit() or len(pin)!=4:
-            Color.error("[-] Invalid PIN format. PIN must be a 4-digit number.")
+        try:
+            self.clear_console(False)
+            Color.info("[X] Set PIN")
+            pin = input("Enter new PIN (4Digit Number)\n> ")
+            if not pin.isdigit() or len(pin)!=4:
+                Color.error("[-] Invalid PIN format. PIN must be a 4-digit number.")
+                input("Press Enter to continue...")
+                return None
+            else:
+                if not self.loadcell.set_pin(pin):
+                    Color.error("[-] Failed to set PIN.")
+                else:
+                    Color.success("[+] PIN set successfully.")
+                input("Press Enter to continue...")
+        except KeyboardInterrupt:
+            Color.error("[-] Set PIN cancelled by user.")
             input("Press Enter to continue...")
             return None
-        else:
-            if not self.loadcell.set_pin(pin):
-                Color.error("[-] Failed to set PIN.")
-            else:
-                Color.success("[+] PIN set successfully.")
+        except Exception as e:
+            Color.error(f"[-] Failed to set PIN: {e}")
             input("Press Enter to continue...")
+            
+    def get_pin(self):
+        self.clear_console(False)
+        Color.info("[X] Get PIN")
+        pin = self.loadcell.get_pin()
+        if not pin:
+            Color.error("[-] Failed to get PIN.")
+        else:
+            Color.success(f"[+] Current PIN: {pin}")
+        input("Press Enter to continue...")
+    
+    def get_scale(self):
+        self.clear_console(False)
+        Color.info("[X] Get Scale Factor")
+        scale = self.loadcell.get_scale()
+        if scale is False:
+            Color.error("[-] Failed to get scale factor.")
+        else:
+            Color.success(f"[+] Current Scale Factor: {scale}")
+        input("Press Enter to continue...")
 
 class plotter:
     def __init__(self, loadcell_controller=None):

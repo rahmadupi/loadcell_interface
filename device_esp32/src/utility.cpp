@@ -29,6 +29,12 @@ const char* command_to_string(COMMAND cmd) {
             return "SET_MODE";
         case COMMAND::SET_TARE:
             return "SET_TARE";
+        case COMMAND::SET_SCALE:
+            return "SET_SCALE";
+        case COMMAND::GET_SCALE:
+            return "GET_SCALE";
+        case COMMAND::GET_PIN:
+            return "GET_PIN";
         default:
             return "UNKNOWN_COMMAND";
     }
@@ -45,11 +51,11 @@ void send_data(const uint8_t* data, int len, METHOD method) {
     buf.insert(buf.end(), data, data + len);
 
     // debug
-    // DEBUG("[+] Sending data via" + String((method == METHOD::SERIAL_COM ? " SERIAL" : " BLUETOOTH")));
-    // for (int i = 0; i < buf.size(); i++) {
-    //     Serial.printf("%02X ", buf[i]);
-    // }
-    // DEBUG();
+    DEBUG("[+] Sending data via" + String((method == METHOD::SERIAL_COM ? " SERIAL" : " BLUETOOTH")));
+    for (int i = 0; i < buf.size(); i++) {
+        Serial.printf("%02X ", buf[i]);
+    }
+    DEBUG();
 
     if (method == METHOD::SERIAL_COM) {
         Serial.write(buf.data(), buf.size());
@@ -72,9 +78,11 @@ void baca_bluetooth(void (*callback)(const uint8_t* data, int len, METHOD method
     if (SerialBT.read() != 0x00) return;
 
     int len = SerialBT.read();
-    uint8_t data[len];
-    SerialBT.readBytes(data, len);
-    callback(data, len, METHOD::BLUETOOTH_COM);
+    if (len <= 0) return;
+    if (SerialBT.available() < len) return;
+    std::vector<uint8_t> data(len);
+    SerialBT.readBytes(data.data(), len);
+    callback(data.data(), len, METHOD::BLUETOOTH_COM);
 }
 
 void baca_serial(void (*callback)(const uint8_t* data, int len, METHOD method)) {
@@ -82,9 +90,11 @@ void baca_serial(void (*callback)(const uint8_t* data, int len, METHOD method)) 
     if (Serial.read() != 0x00) return;
 
     int len = Serial.read();
-    uint8_t data[len];
-    Serial.readBytes(data, len);
-    callback(data, len, METHOD::SERIAL_COM);
+    if (len <= 0) return;
+    if (Serial.available() < len) return;
+    std::vector<uint8_t> data(len);
+    Serial.readBytes(data.data(), len);
+    callback(data.data(), len, METHOD::SERIAL_COM);
 }
 
 void process_perintah(const uint8_t* data, int len, METHOD method) {
@@ -93,15 +103,15 @@ void process_perintah(const uint8_t* data, int len, METHOD method) {
 
     if (cmd == COMMAND::PING) {
         byte data_sent[2] = {PING, 0};
-        comms_method = method;
-        method == METHOD::SERIAL_COM ? send_data(data_sent, 2, METHOD::SERIAL_COM) : send_data(data_sent, 2, METHOD::BLUETOOTH_COM);
+        send_data(data_sent, sizeof(data_sent), method);
     }
     if (cmd == COMMAND::RESET_DEFAULT) {
         FRESH_SETUP();
     }
     if (cmd == COMMAND::GET_MODE) {
-        byte data_sent[2] = {GET_MODE, (byte)loadcell_mode};
-        method == METHOD::SERIAL_COM ? send_data(data_sent, 2, METHOD::SERIAL_COM) : send_data(data_sent, 2, METHOD::BLUETOOTH_COM);
+        byte data_sent[6] = {GET_MODE, (byte)loadcell_mode};
+        memcpy(&data_sent[2], &cell_interval_ms, sizeof(uint32_t));
+        send_data(data_sent, sizeof(data_sent), method);
     }
     if (cmd == COMMAND::SET_PIN) {
         String new_pin = "";
@@ -109,33 +119,35 @@ void process_perintah(const uint8_t* data, int len, METHOD method) {
             new_pin += (char)data[i];
         }
         new_pin.trim();
-        if (new_pin.length() > 0 && new_pin.length() < 4) {
+        if (new_pin.length() == 4) {
             EEPROM.writeString(ADDR_PIN, new_pin.c_str());
             EEPROM.commit();
             DEBUG("[+] PIN updated to: " + new_pin);
+        } else {
+            error_led_blink(10, 50);
+            DEBUG("[-] PIN update failed. PIN must be 4 characters long.");
         }
     }
     if (cmd == COMMAND::SET_MODE) {
         MODE new_mode = static_cast<MODE>(data[1]);
-        MODE past_mode = loadcell_mode;
         int interval_ms;
         memcpy(&interval_ms, data + 2, sizeof(int));
         loadcell_mode = new_mode;
-        DEBUG("[+] Loadcell mode changed to: " + String((int)new_mode));
+        DEBUG("[+] Setting loadcell mode to: " + String((int)new_mode) + " with interval " + String(interval_ms) + " ms");
         if (new_mode == MODE::RUN) {
+            cell_interval_ms = interval_ms;
+            EEPROM.writeInt(ADDR_CELL_INTERVAL_MS, cell_interval_ms);
+            EEPROM.commit();
             if (eTaskGetState(cell_task_handle) == eSuspended)
                 vTaskResume(cell_task_handle);
-            if (past_mode == new_mode) {
-                cell_interval_ms = interval_ms;
-            }
         }
 
         if (new_mode == MODE::ACTIVE) {
+            cell_interval_ms = interval_ms;
+            EEPROM.writeInt(ADDR_CELL_INTERVAL_MS, cell_interval_ms);
+            EEPROM.commit();
             if (eTaskGetState(cell_task_handle) == eSuspended)
                 vTaskResume(cell_task_handle);
-            if (past_mode == new_mode) {
-                cell_interval_ms = interval_ms;
-            }
         }
 
         if (new_mode == MODE::STOP) {
@@ -146,8 +158,9 @@ void process_perintah(const uint8_t* data, int len, METHOD method) {
             if (eTaskGetState(cell_task_handle) != eSuspended)
                 vTaskSuspend(cell_task_handle);
             uint8_t step = data[2];
-            uint8_t known_weight = 0;
-            if (len >= 4) {
+            // uint8_t known_weight = 0; // Salah jancookkk
+            float known_weight = 0;
+            if (len >= 3 + (int)sizeof(float)) {
                 memcpy(&known_weight, data + 3, sizeof(float));
             }
             if (step <= 3)
@@ -158,26 +171,64 @@ void process_perintah(const uint8_t* data, int len, METHOD method) {
         }
     }
     if (cmd == COMMAND::SET_TARE) {
+#ifdef BOGDE_HX711
         cell.tare();
-        DEBUG("[+] Loadcell tared.");
+#else
+        cell.tareNoDelay();
+#endif
+        if (cell.getTareStatus())
+            DEBUG("[+] Loadcell tared.");
+        else {
+            error_led_blink(10, 25);
+            DEBUG("[-] Loadcell tare failed.");
+        }
     }
     if (cmd == COMMAND::GET_READING) {
         byte data_sent[5] = {GET_READING};
         memcpy(&data_sent[1], &cell_reading, sizeof(float));
-        method == METHOD::SERIAL_COM ? send_data(data_sent, 5, METHOD::SERIAL_COM) : send_data(data_sent, 5, METHOD::BLUETOOTH_COM);
+        send_data(data_sent, sizeof(data_sent), method);
     }
     if (cmd == COMMAND::SET_SCALE) {
         float scale_factor;
-        memcpy(&scale_factor, data + 1, sizeof(float));
+        if (len >= 1 + (int)sizeof(float)) {
+            memcpy(&scale_factor, data + 1, sizeof(float));
+        } else {
+            DEBUG("[-] SET_SCALE: invalid payload length");
+            return;
+        }
+#ifdef BOGDE_HX711
         cell.set_scale(scale_factor);
-        DEBUG("[+] Loadcell scale factor set to: " + String(scale_factor));
+#else
+        cell.setCalFactor(scale_factor);
+#endif
 
         // Save to EEPROM
         EEPROM.writeFloat(ADDR_CELL_SCALE, scale_factor);
         EEPROM.commit();
-        Serial.printf("[+] Scale factor saved to EEPROM: %.5f\n", scale_factor);
-        Serial.printf("[+] Offset saved to EEPROM: %ld\n", cell.get_offset());
-        Serial.printf("[+] Scale reading: %.2f g\n", EEPROM.readFloat(ADDR_CELL_SCALE));
+        DEBUG("[+] Loadcell scale factor set to: " + String(scale_factor));
         DEBUG("[+] Scale factor saved to EEPROM.");
+    }
+    if (cmd == COMMAND::GET_SCALE) {
+#ifdef BOGDE_HX711
+        float scale_factor = cell.get_scale();
+#else
+        float scale_factor = cell.getCalFactor();
+#endif
+
+        byte data_sent[5] = {GET_SCALE};
+        memcpy(&data_sent[1], &scale_factor, sizeof(float));
+        send_data(data_sent, sizeof(data_sent), method);
+    }
+    if (cmd == COMMAND::GET_PIN) {
+        String pin = EEPROM.readString(ADDR_PIN);
+        pin.trim();
+        Serial.println("PIN: " + pin);
+
+        size_t pin_len = pin.length();
+        if (pin_len > 250) pin_len = 250;  // keep len within a single-byte payload
+        std::vector<uint8_t> data_sent(1 + pin_len);
+        data_sent[0] = GET_PIN;
+        if (pin_len > 0) memcpy(data_sent.data() + 1, pin.c_str(), pin_len);
+        send_data(data_sent.data(), (int)data_sent.size(), method);
     }
 }

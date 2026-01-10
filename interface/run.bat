@@ -22,9 +22,9 @@ if not exist "%PYTHON_PATH%" (
 )
 
 echo [+] Using Python at: %PYTHON_PATH%
-echo [+] Checking dependencies...
-%PYTHON_PATH% -m pip install -r ./bin/requirements.txt
-echo [+] Dependencies installed.
+@REM echo [+] Checking dependencies...
+@REM %PYTHON_PATH% -m pip install -r ./bin/requirements.txt
+@REM echo [+] Dependencies installed.
 cls
 
 echo [+] Starting application...

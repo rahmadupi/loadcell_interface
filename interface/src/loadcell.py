@@ -3,6 +3,7 @@ from threading import Lock, Thread, Event
 from time import sleep
 import os
 import struct
+from xml.etree.ElementInclude import include
 
 
 class LOADCELL_MODE(Enum):
@@ -15,7 +16,9 @@ class LOADCELL_MODE(Enum):
 class LOADCELL_COMMAND(Enum):
     PING = 0
     RESET_DEFAULT=auto()
+    GET_PIN=auto()
     GET_MODE=auto()
+    GET_SCALE=auto()
     GET_READING=auto()
     SET_PIN=auto()
     SET_MODE=auto()
@@ -26,7 +29,8 @@ class loadcell_controller:
     def __init__(self, comms_controller):
         self.comms = comms_controller
         self.reading=0.0
-        self.mode=LOADCELL_MODE.RUN
+        self.mode=LOADCELL_MODE.SETUP
+        self.interval=100  # in Hz
         self.reading_thread = None
         self.stop_reading = Event()
         self.lock = Lock()
@@ -36,23 +40,26 @@ class loadcell_controller:
     def info(self):
         return {
             "mode": self.mode.name,
-            "connected": self.comms.is_connected(),
-            "comm_method": self.comms.device.name,
-            "port": self.comms.ser.port if self.comms.ser else "None"
+            "connected": self.check_connection(),
+            "comm_method": self.comms.connection_method(),
+            "port": self.comms.ser.port if self.comms.ser else "None",
+            "interval": str(self.interval)+" Hz",
         }
         
     def get_current_reading(self):
         with self.lock:
-            return self.reading if self.status() else 0.0
+            return self.reading if self.check_connection() else 0.0
         
     def startup(self):
-        if not self.comms.is_connected():
+        if not self.check_connection():
             self.comms.connect()
             
         self.get_mode() 
         self.start_reading_loop()
-
-    def status(self):
+    
+    def check_connection(self, reconnect=False):
+        if not self.comms.is_connected() and reconnect:
+            self.reconnect()
         return self.comms.is_connected()
     
     def reconnect(self):
@@ -98,29 +105,38 @@ class loadcell_controller:
                 sleep(0.5)
     
     def reading_loop(self):
-        response=self.comms.read(timeout=500)
-        if response:
-            data=response[1][1:]
-            if len(data)>=4:
-                # with self.lock:
-                self.reading = struct.unpack('<f', bytes(data[:4]))[0]
-                # print(f"Loadcell Reading: {self.reading} g")
-                # input("Press Enter to continueLaodcell...")
-                # publish to plotter if available
-                try:
-                    if hasattr(self, 'plotter') and self.plotter is not None:
-                        self.plotter.publish(self.reading)
-                except Exception:
-                    pass
+        try:
+            response=self.comms.read(timeout=500)
+            if response:
+                data=response[1][1:]
+                if len(data)>=4:
+                    # with self.lock:
+                    self.reading = struct.unpack('<f', bytes(data[:4]))[0]
+                    # print(f"Loadcell Reading: {self.reading} g")
+                    # input("Press Enter to continueLaodcell...")
+                    # publish to plotter if available
+                    try:
+                        if hasattr(self, 'plotter') and self.plotter is not None:
+                            self.plotter.publish(self.reading)
+                    except Exception:
+                        pass
+                else:
+                    # with self.lock:
+                    self.reading = 0.0
             else:
                 # with self.lock:
                 self.reading = 0.0
-        else:
-            # with self.lock:
+        except Exception as e:
             self.reading = 0.0
+            print(f"Error in reading loop: {e}")
+            sleep(0.5)
         
     # Available commands
     def ping(self):
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
         data_sent=[LOADCELL_COMMAND.PING.value]
         self.comms.write(data_sent, header=True, convert_to_bytes=True) 
         response=self.comms.read(timeout=500)
@@ -130,45 +146,81 @@ class loadcell_controller:
         return False
     
     def reset(self):
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
         data_sent=[LOADCELL_COMMAND.RESET_DEFAULT.value]
         self.comms.write(data_sent, header=True, convert_to_bytes=True)
         return True
     
     def get_mode(self):
-        mode=None
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
         data_sent=[LOADCELL_COMMAND.GET_MODE.value]
         self.comms.write(data_sent, header=True, convert_to_bytes=True)
-        response=self.comms.read(timeout=500, debug=True)
+        response=self.comms.read(timeout=500)
         if response and response[0]=="response":
-            mode_value=response[1][0]
-            mode=LOADCELL_MODE(mode_value).name
-            self.mode=LOADCELL_MODE(mode_value)
-        return mode
+            mode=response[1][1]
+            self.mode=LOADCELL_MODE(mode)
+            self.interval = struct.unpack('<I', bytes(response[1][2:6]))[0]
+            # print(response)
+            # input("Press Enter to continue...")
+            return self.mode.name
     
     def set_mode(self, mode: LOADCELL_MODE, interval=None):
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
         data_sent=[LOADCELL_COMMAND.SET_MODE.value,mode.value]
         if interval is not None:
             data_sent.append(int(interval))
         self.comms.write(data_sent, header=True, convert_to_bytes=True)
-        self.mode=mode
+        
+        self.get_mode()
         return True
     
     def set_tare(self):
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
         data_sent=[LOADCELL_COMMAND.SET_TARE.value]
         self.comms.write(data_sent, header=True, convert_to_bytes=True)
         return True
         
-    # def get_scale(self):
-    #     #TODO
-    #     pass
-    
     def set_pin(self, pin: str):
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
         data_sent=[LOADCELL_COMMAND.SET_PIN.value]
         data_sent.append(pin)
         self.comms.write(data_sent, header=True, convert_to_bytes=True)
         return True
     
+    def get_pin(self):
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
+        pin=None
+        data_sent=[LOADCELL_COMMAND.GET_PIN.value]
+        self.comms.write(data_sent, header=True, convert_to_bytes=True)
+        response=self.comms.read(timeout=500)
+        if response and response[0]=="response":
+            pin=response[1][1:]
+            pin="".join([chr(b) for b in pin])
+        return pin
+    
     def calibrate(self, step=0, weight: float=0.0):
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
         data_sent=[LOADCELL_COMMAND.SET_MODE.value, LOADCELL_MODE.CALIBRATE.value, step]
         if weight>0.0:
             data_sent.append(weight)
@@ -177,8 +229,25 @@ class loadcell_controller:
         return True
     
     def set_scale(self, scale: float):
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
         data_sent=[LOADCELL_COMMAND.SET_SCALE.value]
         data_sent.append(scale)
         self.comms.write(data_sent, header=True, convert_to_bytes=True)
         return True
     
+    def get_scale(self):
+        if not self.check_connection():
+            print("[-] No Connection to the esp32")
+            return False
+        
+        scale=None
+        data_sent=[LOADCELL_COMMAND.GET_SCALE.value]
+        self.comms.write(data_sent, header=True, convert_to_bytes=True)
+        response=self.comms.read(timeout=500)
+        if response and response[0]=="response":
+            scale_value=response[1][1:]
+            scale=struct.unpack('<f', bytes(scale_value))[0]
+        return scale

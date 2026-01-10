@@ -2,16 +2,22 @@
 #include <Arduino.h>
 #include <BluetoothSerial.h>
 #include <EEPROM.h>
+
+#ifdef BOGDE_HX711
 #include <HX711.h>
+#else
+#include <HX711_ADC.h>
+#endif
+
 #include <WiFi.h>
+#include <math.h>
 
 #include <mutex>
 #include <vector>
-
 #ifdef VERBOSE
-#define DEBUG(...) DEBUG(__VA_ARGS__)
+#define DEBUG(x) Serial.println(x)
 #else
-#define DEBUG(...)
+#define DEBUG(x)
 #endif
 
 /*
@@ -20,9 +26,6 @@
 #define EEPROM_SIZE 128
 #define PROGRAM_TYPE 0xAB
 #define PROGRAM_NAME "ESP32_LOADCELL"
-
-#define CELL_DOUT_PIN 27
-#define CELL_SCK_PIN 14
 
 /*
     DEFINISI ENUM
@@ -43,7 +46,9 @@ enum METHOD {
 enum COMMAND {
     PING = 0,
     RESET_DEFAULT,
+    GET_PIN,
     GET_MODE,
+    GET_SCALE,
     GET_READING,
     SET_PIN,
     SET_MODE,
@@ -65,11 +70,13 @@ enum EEPROM_ADDRESS {
     DEFINISI PIN
 */
 #define led_pin 2
-// #define hx711_dout_pin 4
+#define CELL_DOUT_PIN 27
+#define CELL_SCK_PIN 14
 
 /*
     FUNGSI
 */
+// void DEBUG(const char* msg);
 /**
  * @brief fungsi untuk melakukan pembacaan data dari serial
  * @param callback fungsi callback yang akan dipanggil saat data diterima
@@ -130,7 +137,12 @@ extern BluetoothSerial SerialBT;
 extern std::mutex data_out_mtx;
 extern std::mutex data_in_mtx;
 
+#ifdef BOGDE_HX711
 extern HX711 cell;
+#else
+extern HX711_ADC cell;
+#endif
+
 extern TaskHandle_t cell_task_handle;
 extern MODE loadcell_mode;
 extern float cell_reading;
