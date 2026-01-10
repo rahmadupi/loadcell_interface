@@ -1,0 +1,5 @@
+pyserial
+colorama
+matplotlib>=3.0
+PyQt5
+wxPython
