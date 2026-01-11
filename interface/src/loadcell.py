@@ -81,7 +81,6 @@ class loadcell_controller:
         return [LOADCELL_MODE.RUN.name, LOADCELL_MODE.ACTIVE.name, LOADCELL_MODE.STOP.name]
     
     def start_reading_loop(self):
-        """Start background thread for continuous reading."""
         if self.reading_thread is None or not self.reading_thread.is_alive():
             self.stop_reading.clear()
             self.reading_thread = Thread(target=self._reading_loop_worker, daemon=True, name="loadcellreadthread")
@@ -90,14 +89,12 @@ class loadcell_controller:
             # input("Press Enter to continue...")
     
     def stop_reading_loop(self):
-        """Stop the reading loop thread gracefully."""
         if self.reading_thread and self.reading_thread.is_alive():
             self.stop_reading.set()
             self.reading_thread.join(timeout=2.0)
             self.reading_thread = None
     
     def _reading_loop_worker(self):
-        """Background worker that continuously reads data from device."""
         while not self.stop_reading.is_set():
             if self.comms.is_connected() and self.mode == LOADCELL_MODE.ACTIVE:
                 self.reading_loop()
@@ -106,7 +103,7 @@ class loadcell_controller:
     
     def reading_loop(self):
         try:
-            response=self.comms.read(timeout=500)
+            response=self.comms.read(timeout=500,debug=False)
             if response:
                 data=response[1][1:]
                 if len(data)>=4:
@@ -165,12 +162,15 @@ class loadcell_controller:
         if response and response[0]=="response":
             mode=response[1][1]
             self.mode=LOADCELL_MODE(mode)
-            self.interval = struct.unpack('<I', bytes(response[1][2:6]))[0]
+            try:
+                self.interval = struct.unpack('<I', bytes(response[1][2:6]))[0]
+            except Exception:
+                pass
             # print(response)
             # input("Press Enter to continue...")
             return self.mode.name
     
-    def set_mode(self, mode: LOADCELL_MODE, interval=None):
+    def set_mode(self, mode: LOADCELL_MODE, interval=100):
         if not self.check_connection():
             print("[-] No Connection to the esp32")
             return False

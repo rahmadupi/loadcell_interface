@@ -19,7 +19,7 @@ def get_version():
 
 __version__ = get_version()
 __license__ = "MIT"
-__author__ = "rahmadupi"
+__author__ = ""
 
 # Expose main classes
 from .main import main

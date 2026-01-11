@@ -51,11 +51,11 @@ void send_data(const uint8_t* data, int len, METHOD method) {
     buf.insert(buf.end(), data, data + len);
 
     // debug
-    DEBUG("[+] Sending data via" + String((method == METHOD::SERIAL_COM ? " SERIAL" : " BLUETOOTH")));
-    for (int i = 0; i < buf.size(); i++) {
-        Serial.printf("%02X ", buf[i]);
-    }
-    DEBUG();
+    // DEBUG("[+] Sending data via" + String((method == METHOD::SERIAL_COM ? " SERIAL" : " BLUETOOTH")));
+    // for (int i = 0; i < buf.size(); i++) {
+    //     Serial.printf("%02X ", buf[i]);
+    // }
+    // DEBUG();
 
     if (method == METHOD::SERIAL_COM) {
         Serial.write(buf.data(), buf.size());
@@ -103,6 +103,7 @@ void process_perintah(const uint8_t* data, int len, METHOD method) {
 
     if (cmd == COMMAND::PING) {
         byte data_sent[2] = {PING, 0};
+        comms_method = method;
         send_data(data_sent, sizeof(data_sent), method);
     }
     if (cmd == COMMAND::RESET_DEFAULT) {
@@ -165,23 +166,24 @@ void process_perintah(const uint8_t* data, int len, METHOD method) {
             }
             if (step <= 3)
                 SENSOR_CALIBRATE(step, known_weight);
-            if (step == 3)
-                if (eTaskGetState(cell_task_handle) == eSuspended)
-                    vTaskResume(cell_task_handle);
+            if (step >= 3)
+                // if (eTaskGetState(cell_task_handle) == eSuspended)
+                vTaskResume(cell_task_handle);
         }
     }
     if (cmd == COMMAND::SET_TARE) {
 #ifdef BOGDE_HX711
         cell.tare();
+        DEBUG("[+] Loadcell tared.");
 #else
         cell.tareNoDelay();
-#endif
         if (cell.getTareStatus())
             DEBUG("[+] Loadcell tared.");
         else {
             error_led_blink(10, 25);
             DEBUG("[-] Loadcell tare failed.");
         }
+#endif
     }
     if (cmd == COMMAND::GET_READING) {
         byte data_sent[5] = {GET_READING};

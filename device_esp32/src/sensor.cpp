@@ -84,14 +84,22 @@ void SENSOR_LOOP(void* pvParameters) {
         // Lawas
 #ifdef BOGDE_HX711
         reading = cell.get_units(1);
+        if (!reading)
+            reading = 0.0f;
 #else
         if (cell.update())
             reading = cell.getData();
+        if (!reading)
+            reading = 0.0f;
 #endif
         if (!isfinite(reading) || isnan(reading)) {
-            DEBUG("[!] Invalid loadcell reading (NaN/Inf) detected; substituting 0.0 g");
-            reading = 0.0f;
+            DEBUG("[!] Invalid loadcell reading (NaN/Inf) detected; substituting 50.0 g");
+            reading = 15.0f;
         }
+
+        // #ifdef VERBOSE
+        //         DEBUG("[+] Loadcell reading: " + String(reading) + " g");
+        // #endif
 
         if (cell_reading_queue)
             xQueueOverwrite(cell_reading_queue, &reading);
